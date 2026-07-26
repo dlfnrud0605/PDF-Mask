@@ -1,0 +1,126 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PDF Mask</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+    <!-- ===================== 업로드 화면 ===================== -->
+    <div class="app-shell" id="uploadScreen">
+        <nav class="topnav">
+            <div class="topnav-logo">
+                <span class="logo-mark">P</span>
+                <span class="logo-text">PDF <span class="logo-accent">Mask</span></span>
+            </div>
+        </nav>
+
+        <main class="hero">
+            <h1 class="hero-title">문서 속 핵심 어구,<br>클릭 한 번으로 <span class="hero-accent">가려보세요</span></h1>
+            <p class="hero-sub">PDF와 PPT를 업로드하면 AI가 핵심 어구를 찾아 자동으로 마스킹해드려요.</p>
+
+            <div class="upload-card">
+                <form id="uploadForm">
+                    <div class="dropzone" id="dropzone">
+                        <input type="file" id="fileInput" accept="application/pdf" hidden>
+                        <div class="upload-icon">
+                            <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M17 8l-5-5-5 5M12 3v12"/>
+                            </svg>
+                        </div>
+                        <p class="drop-title">PDF 파일을 끌어다 놓으세요</p>
+                        <p class="drop-desc">또는 클릭해서 파일 탐색기 열기</p>
+                        <p class="file-name" id="fileName"></p>
+                    </div>
+
+                    <div class="options-panel">
+                        <div class="option-group">
+                            <label>처리 모드</label>
+                            <div class="radio-group">
+                                <input type="radio" id="mode_digital" name="mode" value="digital" checked>
+                                <label for="mode_digital" class="radio-label">
+                                    <span class="title">⚡ 디지털 텍스트</span>
+                                    <span class="desc">원본 메타데이터 기반, 초고속</span>
+                                </label>
+
+                                <input type="radio" id="mode_ocr" name="mode" value="ocr">
+                                <label for="mode_ocr" class="radio-label">
+                                    <span class="title">🔍 스캔본 (OCR)</span>
+                                    <span class="desc">이미지 기반 정밀 분석</span>
+                                </label>
+                            </div>
+                        </div>
+
+                    </div>
+
+                    <button type="submit" id="submitBtn" class="pill-btn pill-primary pill-block" disabled>
+                        <span class="btn-text">문서 분석 시작</span>
+                        <div class="spinner" id="spinner"></div>
+                    </button>
+                </form>
+
+                <div id="statusMessage" class="status-message"></div>
+            </div>
+        </main>
+    </div>
+
+    <!-- ===================== 리뷰/검토 화면 (Canva 스타일 에디터, 목업 데이터) ===================== -->
+    <div class="editor-shell" id="reviewScreen" style="display:none">
+        <div class="editor-topbar">
+            <button type="button" id="backToUploadBtn" class="editor-back">← 돌아가기</button>
+
+            <div class="editor-title">
+                <span class="editor-title-main">어절 청킹 검토</span>
+            </div>
+
+            <div class="editor-ratio" style="margin-left:auto">
+                <span class="editor-ratio-label">마스킹 비율</span>
+                <input type="range" id="reviewMaskRatio" class="slider slider-topbar" min="0" max="1" step="0.05" value="0.3">
+                <span id="reviewRatioValue" class="ratio-badge ratio-badge-dark">30%</span>
+            </div>
+
+            <button type="button" id="confirmBtn" class="pill-btn pill-primary">✅ 확정하고 마스킹 PDF 다운로드</button>
+        </div>
+
+        <div class="editor-body">
+            <div class="editor-canvas-area">
+                <div class="page-frame" id="pageFrame">
+                    <canvas id="pageCanvas"></canvas>
+                    <!-- 어절 단위 오버레이 박스가 JS로 여기에 삽입됨 -->
+                </div>
+
+                <!-- Shift+클릭으로 여러 어절을 선택하면 나타나는 그룹핑 액션바 -->
+                <div class="group-action-bar" id="groupActionBar" style="display:none">
+                    <span id="groupCountLabel">2개 선택됨</span>
+                    <button type="button" id="groupBtn" class="pill-btn pill-primary pill-sm">🔗 하나로 묶기</button>
+                    <button type="button" id="clearSelectionBtn" class="pill-btn pill-outline pill-sm">선택 해제</button>
+                </div>
+            </div>
+
+            <aside class="editor-side-panel">
+                <h3 class="side-panel-title">어절 / 청크 목록</h3>
+                <p class="side-panel-desc"><b>클릭</b>으로 여러 어절을 골라 직접 청킹(하나로 묶기)할 수 있어요. 묶은 건 <b>해제</b> 버튼으로 다시 풀 수 있어요.</p>
+                <p class="side-panel-desc">확정하면, 위에서 정한 <b>마스킹 비율</b>만큼 지금 만들어진 청크 중 일부가 가려진 PDF 파일이 다운로드돼요.</p>
+                <div class="chunk-list" id="chunkList">
+                    <!-- 어절/그룹 체크리스트가 JS로 여기에 삽입됨 -->
+                </div>
+            </aside>
+        </div>
+
+        <!-- 하단 페이지 필름스트립 (Canva 스타일) -->
+        <div class="editor-filmstrip-bar">
+            <div class="filmstrip" id="pageSidebar">
+                <!-- 페이지 썸네일이 JS로 여기에 삽입됨 -->
+            </div>
+        </div>
+
+    </div>
+
+    <script type="module" src="script.js"></script>
+</body>
+</html>

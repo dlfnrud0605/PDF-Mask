@@ -1,0 +1,38 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# 런타임 생성물 (업로드/마스킹 결과 임시 파일)
+data/
+
+# 개발/실험용 스크립트·산출물 (청킹 규칙 프로토타이핑 등)
+tmp/
+
+# 모델 가중치 (용량 큼 — work_dirs/epoch_380.pth는 205MB로 GitHub 100MB 제한 초과.
+# README에 필요한 파일 경로가 문서화돼 있으니 별도로 받아서 채워 넣어야 함)
+models/
+work_dirs/
+sample.pdf
+
+# 로그
+logs/
+*.log
+nohup.out
+celerybeat-schedule
+
+# 환경/자격증명
+.env
+
+# OS/에디터
+.DS_Store
+Thumbs.db
+.vscode/
+
+# 로컬 AI 코딩 툴 설정/세션 상태
+.claude/
+
+docs/
+__논문/

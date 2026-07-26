@@ -1,0 +1,39 @@
+# pdfmask2 파이프라인 구성 설정
+# 이 파일을 수정하여 활성화할 모델 부품을 자유롭게 갈아끼울 수 있습니다.
+
+pipeline:
+  layout_detector: "YOLOv8"  # options: ["YOLOv8", "LayoutParser"]
+  text_detector: "DBNetPP"   # options: ["DBNetPP", "CRAFT", "PaddleDetection"]
+  recognizer: "SVTR"
+  keyword_extractor: "MultiLangChunker"  # options: ["KoChunker", "MultiLangChunker"]
+  pdf_extractor: "PyMuPDFExtractor"
+
+# AI 모델의 이름과 실제 파이썬 코드가 존재하는 주소(클래스 경로)를 매핑합니다.
+registry:
+  YOLOv8: "app.modules.layout.yolo_detector.YOLODetector"
+  DBNetPP: "app.modules.ocr.detection.mmocr_detector.MMOCRTextDetector"
+  SVTR: "app.modules.ocr.recognition.svtr_recognizer.SVTRRecognizer"
+  RapidOCR: "app.modules.ocr.recognition.rapid_recognizer.RapidRecognizer"
+  KoChunker: "app.modules.nlp.ko.KoChunker"
+  MultiLangChunker: "app.modules.nlp.multi.MultiLangChunker"
+  PyMuPDFExtractor: "app.modules.pdf.pymupdf_extractor.PyMuPDFExtractor"
+
+models:
+  yolov8:
+    path: "models/doclayout_yolo_docstructbench_imgsz1024.pt"
+    device: "cuda"
+    conf_thresh: 0.25      # 0.15→0.25: 저신뢰도 잔여 박스 억제
+    iou_thresh: 0.45       # 중복 박스 제거 기준 강화
+    imgsz: 1024            # 고해상도 고정으로 작은 객체도 보장
+    agnostic_nms: true     # 클래스 간 중복 억제
+  dbnetpp:
+    config: "configs/dbnetpp_resnet50_custom.py"
+    weights: "work_dirs/20260601_032706_400e_lr002/epoch_380.pth"
+    device: "cuda"
+    return_heatmap: false
+  svtr:
+    drop_threshold: 0.6    # 신뢰도 0.6 미만은 NLP 오염 방지를 위해 즉시 폐기
+    conda_env_name: "pdfmask_paddle"   # PaddleOCR 워커 실행 환경
+    torch_env_name: "pdfmask_torch"    # cuDNN/cuBLAS 라이브러리 제공 환경
+  rapidocr:
+    drop_threshold: 0.6
