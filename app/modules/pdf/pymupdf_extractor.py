@@ -20,10 +20,6 @@ class PyMuPDFExtractor(BaseModel):
         data = self._extract_rawdict(doc, page_num)
         return data["words"]
 
-    def extract_blocks(self, doc: fitz.Document, page_num: int):
-        data = self._extract_rawdict(doc, page_num)
-        return data["blocks"]
-
     def _extract_rawdict(self, doc: fitz.Document, page_num: int):
         if self._cache_page_num == page_num and self._cache_data is not None:
             return self._cache_data
@@ -53,13 +49,10 @@ class PyMuPDFExtractor(BaseModel):
                 line_size_median[key] = sv[len(sv) // 2]
 
         all_words = []
-        all_blocks = []
 
         for bi, block in enumerate(page_dict.get('blocks', [])):
             if block.get('type') != 0: continue
-            
-            block_words = []
-            
+
             for li, line in enumerate(block.get('lines', [])):
                 line_text = ""
                 words_data = []
@@ -142,18 +135,7 @@ class PyMuPDFExtractor(BaseModel):
                             final_bbox = [int(min(wx)), int(min(wy)), int(max(wx)), int(max(wy))]
                             final_word_dict = {"text": w["word"], "bbox": final_bbox}
                             all_words.append(final_word_dict)
-                            block_words.append(final_word_dict)
 
-            if block_words:
-                bx = [w['bbox'][0] for w in block_words] + [w['bbox'][2] for w in block_words]
-                by = [w['bbox'][1] for w in block_words] + [w['bbox'][3] for w in block_words]
-                if bx and by:
-                    block_bbox = [int(min(bx)), int(min(by)), int(max(bx)), int(max(by))]
-                    all_blocks.append({
-                        "label": "Text",
-                        "bbox": block_bbox
-                    })
-                    
         self._cache_page_num = page_num
-        self._cache_data = {"words": all_words, "blocks": all_blocks}
+        self._cache_data = {"words": all_words}
         return self._cache_data

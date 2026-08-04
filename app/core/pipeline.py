@@ -166,9 +166,9 @@ class PDFMaskingPipeline:
         self.mode = mode
         self.renderer = PDFRenderer(target_width=1280)
         self.keyword_extractor = ModelFactory.get_processor("keyword_extractor")
-        
+        self.yolo_detector = ModelFactory.get_processor("layout_detector")
+
         if self.mode == "ocr":
-            self.yolo_detector = ModelFactory.get_processor("layout_detector")
             self.text_detector = ModelFactory.get_processor("text_detector")
             self.ocr_recognizer = ModelFactory.get_processor("recognizer")
         elif self.mode == "digital":
@@ -192,83 +192,69 @@ class PDFMaskingPipeline:
 
         regions_words_data = []
 
-        if self.mode == "ocr":
-            # 1. Layout Detection
-            regions = self.yolo_detector.infer(image_np)
-            keep_idx = filter_contained_boxes([r['bbox'] for r in regions])
-            regions = [regions[i] for i in keep_idx]
-            order_idx = sort_by_reading_order([r['bbox'] for r in regions])
-            regions = [regions[i] for i in order_idx]
+        # 1. Layout Detection (두 모드 공통)
+        regions = self.yolo_detector.infer(image_np)
+        keep_idx = filter_contained_boxes([r['bbox'] for r in regions])
+        regions = [regions[i] for i in keep_idx]
+        order_idx = sort_by_reading_order([r['bbox'] for r in regions])
+        regions = [regions[i] for i in order_idx]
 
+        if self.mode == "ocr":
             # 2. Text Detection
             infer_out = self.text_detector.infer(image_np)
             full_word_results = infer_out[0] if isinstance(infer_out, tuple) else infer_out
             keep_idx = filter_contained_boxes([r['word_box'] for r in full_word_results])
             full_word_results = [full_word_results[i] for i in keep_idx]
 
-            word_bboxes = []
+            # 3. Text Recognition — 영역 배정 전, 탐지된 어절 전체에 대해 먼저 수행
             word_crops = []
+            valid_word_boxes = []
+            for res in full_word_results:
+                gx1, gy1, gx2, gy2 = res['word_box']
+                crop = image_np[max(0, gy1):min(h, gy2), max(0, gx1):min(w, gx2)]
+                if crop.size == 0: continue
+                word_crops.append(crop)
+                valid_word_boxes.append([gx1, gy1, gx2, gy2])
+
+            all_results = self.ocr_recognizer.infer(word_crops) if word_crops else []
+
+            recognized_words = []
             seen_boxes = set()
+            for idx, word_info in enumerate(all_results):
+                if not word_info: continue
+                text = "".join([item["text"] for item in word_info]).strip()
+                if not text: continue
+                bbox = valid_word_boxes[idx]
+                box_key = tuple(bbox)
+                if box_key in seen_boxes: continue
+                seen_boxes.add(box_key)
+                recognized_words.append({"text": text, "bbox": bbox})
 
-            for r_idx, region in enumerate(regions):
+            # 4. Assignment — 인식이 끝난 어절을 영역에 배정
+            for region in regions:
                 rx1, ry1, rx2, ry2 = region['bbox']
-                label = region['label']
-                region_word_indices = []
-
-                for res in full_word_results:
-                    gx1, gy1, gx2, gy2 = res['word_box']
-                    box_key = (gx1, gy1, gx2, gy2)
-
+                region_words_with_text = []
+                for w in recognized_words:
+                    gx1, gy1, gx2, gy2 = w["bbox"]
                     cx = (gx1 + gx2) / 2
                     cy = (gy1 + gy2) / 2
                     if rx1 <= cx <= rx2 and ry1 <= cy <= ry2:
-                        if box_key in seen_boxes: continue
-                        seen_boxes.add(box_key)
-
-                        crop = image_np[max(0, gy1):min(h, gy2), max(0, gx1):min(w, gx2)]
-                        if crop.size == 0: continue
-
-                        region_word_indices.append(len(word_bboxes))
-                        word_bboxes.append([gx1, gy1, gx2, gy2])
-                        word_crops.append(crop)
+                        region_words_with_text.append(w)
 
                 regions_words_data.append({
-                    "label": label,
+                    "label": region['label'],
                     "region_bbox": [rx1, ry1, rx2, ry2],
-                    "word_indices": region_word_indices,
+                    "words": unify_y_values_and_group(region_words_with_text)
                 })
 
-            # 3. Text Recognition
-            all_results = self.ocr_recognizer.infer(word_crops) if word_crops else []
-
-            for region_data in regions_words_data:
-                region_words_with_text = []
-                for idx in region_data["word_indices"]:
-                    word_info = all_results[idx] if idx < len(all_results) else None
-                    if not word_info: continue
-                    text = "".join([item["text"] for item in word_info]).strip()
-                    if text:
-                        region_words_with_text.append({
-                            "text": text,
-                            "bbox": word_bboxes[idx],
-                        })
-                # 기하학적 정규화
-                region_data["words"] = unify_y_values_and_group(region_words_with_text)
-
         elif self.mode == "digital":
-            # PyMuPDF 단독 추출
+            # 2. Text Extraction — PyMuPDF는 탐지와 인식이 한 번에 이뤄짐(이미 텍스트를 알고 있음)
             extracted_words = self.pymupdf_extractor.extract_words(doc, page_num)
             extracted_words = dedupe_overlapping_words(extracted_words)
-            extracted_blocks = self.pymupdf_extractor.extract_blocks(doc, page_num)
-            # 블록(문단) 경계가 서로 겹치거나 포함관계면(예: 첫 줄만 있는 짧은 블록이
-            # 전체를 담은 긴 블록 안에 그대로 포함) 같은 어절이 여러 블록에 중복
-            # 배정되어 같은 청크가 여러 번 나오게 됨 — 겹치는 블록은 하나로 합침
-            keep_idx = filter_contained_boxes([b['bbox'] for b in extracted_blocks])
-            extracted_blocks = [extracted_blocks[i] for i in keep_idx]
 
-            # 블록(단락) 단위로 단어 매핑
-            for block in extracted_blocks:
-                rx1, ry1, rx2, ry2 = block['bbox']
+            # 3. Assignment — 추출된 어절을 YOLO 영역에 배정
+            for region in regions:
+                rx1, ry1, rx2, ry2 = region['bbox']
                 region_words_with_text = []
 
                 for w in extracted_words:
@@ -280,7 +266,7 @@ class PDFMaskingPipeline:
                         region_words_with_text.append(w)
 
                 regions_words_data.append({
-                    "label": block.get("label", "Text"),
+                    "label": region['label'],
                     "region_bbox": [rx1, ry1, rx2, ry2],
                     "words": unify_y_values_and_group(region_words_with_text)
                 })
