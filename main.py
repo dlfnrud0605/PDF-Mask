@@ -94,7 +94,6 @@ class WordItem(BaseModel):
     word_id: str
     text: str
     bbox: list[float]
-    score: float
 
 
 class PageCorrection(BaseModel):

@@ -1,6 +1,5 @@
 import os
 import fitz
-import random
 from PIL import Image
 
 from app.core.factory import ModelFactory
@@ -292,7 +291,6 @@ class PDFMaskingPipeline:
         데이터 보존용으로 그대로 저장함(추가 렌더링 없음) — 나중에 사용자가 청킹을
         확정하면 이 이미지를 그대로 정답 데이터 옆으로 옮겨서 씀.
         """
-        random.seed(51)
         doc = fitz.open(input_pdf_path)
         pages_out = []
         try:
@@ -322,7 +320,6 @@ class PDFMaskingPipeline:
                             "chunk_id": chunk_id,
                             "text": w["text"],
                             "bbox": [x1 * scale_x, y1 * scale_y, x2 * scale_x, y2 * scale_y],
-                            "score": random.random(),
                         })
                         region_word_ids.append((chunk_id, w["bbox"]))
                         chunk_idx += 1

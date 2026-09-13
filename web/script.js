@@ -6,6 +6,24 @@ pdfjsLib.GlobalWorkerOptions.workerSrc =
 
 const API_BASE = "http://localhost:8000";
 
+// 청크 마스킹 점수용 시드 고정 난수 생성기(mulberry32).
+// 이 점수는 "중요도"가 아니라, 사용자가 정한 비율만큼 어떤 청크를 가릴지 정하는 용도의
+// 무작위 값임. 사용자가 청킹을 확정하는 시점에 최종 청크마다 하나씩 부여함(어절 단위가
+// 아님). JS 기본 Math.random()은 시드 고정이 안 되므로, 같은 청킹을 확정하면 매번 같은
+// 청크가 가려지도록(재현성) 결정론적 PRNG를 직접 씀 — 서버 pipeline.py가 예전에
+// random.seed(51)로 하던 역할을 프론트로 옮긴 것.
+function makeSeededRandom(seed) {
+    let a = seed >>> 0;
+    return function () {
+        a |= 0;
+        a = (a + 0x6d2b79f5) | 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+}
+const MASK_SCORE_SEED = 51;
+
 // 묶인 청크(그룹)를 서로 구분하기 위한 색 팔레트. 순서대로 돌려가며 배정하고,
 // 같은 청크에 속한 박스(여러 줄에 걸친 경우 포함)는 전부 같은 색을 씀.
 const CHUNK_COLORS = [
@@ -215,7 +233,6 @@ document.addEventListener("DOMContentLoaded", () => {
                     word_id: c.chunk_id,
                     text: c.text,
                     bbox: c.bbox,
-                    random_score: c.score,
                 })),
                 // 서버가 제안하는 자동 청킹 묶음 — Shift+클릭으로 직접 묶은 것과 동일한
                 // 형식(어절 id 리스트)이라 그대로 초기 그룹 상태로 반영함
@@ -307,7 +324,6 @@ function initReviewDemo() {
     function computeUnit(page, ids) {
         const members = ids.map((id) => getWord(page, id));
         const text = members.map((m) => m.text).join(" ");
-        const score = members.reduce((s, m) => s + m.random_score, 0) / members.length;
 
         // 같은 줄끼리만 min/max로 묶어서 박스를 만듦 (여러 줄에 걸친 그룹을 하나의
         // 큰 사각형으로 감싸면 실제 텍스트가 없는 영역까지 가리게 되므로 방지)
@@ -318,7 +334,7 @@ function initReviewDemo() {
             Math.max(...line.map((m) => m.bbox[3])),
         ]);
 
-        return { key: unitKey(ids), ids, text, boxes, random_score: score };
+        return { key: unitKey(ids), ids, text, boxes };
     }
     function currentPage() {
         return PAGES[currentPageIdx];
@@ -583,7 +599,6 @@ function initReviewDemo() {
                     word_id: w.word_id,
                     text: w.text,
                     bbox: w.bbox,
-                    score: w.random_score,
                 })),
                 final_groups: pageGroups[page.page_num],
             })),
@@ -598,10 +613,15 @@ function initReviewDemo() {
             .catch((err) => console.error("[청킹 확정] 서버 저장 실패:", err));
 
         try {
+            // 확정된 최종 청크마다 마스킹 점수(난수)를 하나씩 부여함. 어절이 아니라
+            // "사용자가 최종적으로 묶은 청크" 단위로 점수를 매기고, 점수가 사용자가 정한
+            // 비율(ratio)보다 낮은 청크 전체를 가림. 시드를 한 번 고정하고 전체 페이지의
+            // 청크를 순서대로 순회하므로, 같은 청킹을 확정하면 매번 같은 청크가 가려짐.
+            const rng = makeSeededRandom(MASK_SCORE_SEED);
             const maskRegionsByPage = new Map();
             PAGES.forEach((page) => {
                 const boxes = unitsOf(page)
-                    .filter((u) => u.random_score < ratio)
+                    .filter(() => rng() < ratio)
                     .flatMap((u) => u.boxes);
                 if (boxes.length) maskRegionsByPage.set(page.page_num, boxes);
             });
