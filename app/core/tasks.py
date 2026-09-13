@@ -13,17 +13,6 @@ def _get_pipeline(mode: str) -> PDFMaskingPipeline:
     return _pipelines[mode]
 
 
-@celery_app.task(name="mask_pdf_task", bind=True)
-def mask_pdf_task(self, input_path: str, output_path: str, mode: str, mask_ratio: float):
-    try:
-        pipeline = _get_pipeline(mode)
-        pipeline.process(input_pdf_path=input_path, output_pdf_path=output_path, mask_ratio=mask_ratio)
-        return {"output_path": output_path}
-    finally:
-        if os.path.exists(input_path):
-            os.remove(input_path)
-
-
 @celery_app.task(name="analyze_pdf_task", bind=True)
 def analyze_pdf_task(self, input_path: str, mode: str, file_id: str):
     """

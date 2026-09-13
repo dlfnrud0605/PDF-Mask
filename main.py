@@ -6,12 +6,12 @@ import uuid
 
 from fastapi import FastAPI, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel
 
 from app.core.celery_app import celery_app
 from app.core.pipeline import ANALYZE_IMAGE_TMP_DIR
-from app.core.tasks import mask_pdf_task, analyze_pdf_task
+from app.core.tasks import analyze_pdf_task
 
 app = FastAPI(title="PDF Mask API")
 
@@ -21,50 +21,6 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
-
-
-@app.post("/api/v1/mask/")
-async def mask_pdf(
-    file: UploadFile = File(...),
-    mode: str = Form("ocr"),
-    mask_ratio: float = Form(0.3),
-):
-    if mode not in ["ocr", "digital"]:
-        return JSONResponse({"error": "Invalid mode. Must be 'ocr' or 'digital'."}, status_code=400)
-
-    # 1. 파일 임시 저장 (요청 처리 자체는 즉시 끝남)
-    os.makedirs("data/input/tmp", exist_ok=True)
-    os.makedirs("data/output/tmp", exist_ok=True)
-
-    file_id = str(uuid.uuid4())
-    input_path = f"data/input/tmp/{file_id}_{file.filename}"
-    output_path = f"data/output/tmp/{file_id}_masked.pdf"
-
-    with open(input_path, "wb") as destination:
-        destination.write(await file.read())
-
-    # 2. 실제 처리는 Celery 워커에게 위임하고 작업 ID만 즉시 반환
-    task = mask_pdf_task.delay(input_path, output_path, mode, mask_ratio)
-    return {"task_id": task.id}
-
-
-@app.get("/api/v1/mask/{task_id}")
-async def get_mask_result(task_id: str):
-    task = celery_app.AsyncResult(task_id)
-
-    if task.state == "PENDING":
-        return JSONResponse({"status": "pending"})
-    elif task.state == "STARTED":
-        return JSONResponse({"status": "processing"})
-    elif task.state == "FAILURE":
-        return JSONResponse({"status": "failed", "error": str(task.result)}, status_code=500)
-    elif task.state == "SUCCESS":
-        output_path = task.result["output_path"]
-        if os.path.exists(output_path):
-            return FileResponse(output_path, media_type="application/pdf", filename="masked.pdf")
-        return JSONResponse({"status": "failed", "error": "Output not found."}, status_code=500)
-    else:
-        return JSONResponse({"status": task.state.lower()})
 
 
 ANALYZE_IMAGE_MAX_AGE_SECONDS = 24 * 3600  # 하루 지나도 확정 안 된 분석 결과 이미지는 정리함

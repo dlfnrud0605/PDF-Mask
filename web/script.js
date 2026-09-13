@@ -92,6 +92,8 @@ async function submitCorrection(payload) {
 // ===================== 마스킹 PDF 생성(클라이언트) =====================
 // 서버에 다시 업로드하지 않고, 로컬에 있는 원본 PDF 파일 위에 직접 검은 사각형을
 // 그려서(pdf-lib) 마스킹된 PDF를 만들고 브라우저 다운로드로 내려줌.
+// 각 원본 페이지를 두 번 복사해 [마스킹본, 원본] 순서로 번갈아 넣어서, 학습자가
+// 가려진 페이지로 문제를 푼 뒤 바로 다음 페이지에서 정답을 확인할 수 있게 함.
 //
 // 주의: PyMuPDF(및 우리 bbox 데이터)는 페이지 크롭박스 좌상단을 (0,0)으로 정규화한
 // 좌표계를 쓰지만, pdf-lib은 PDF 원본 절대좌표(좌하단 원점, y 위로 증가)를 그대로 씀.
@@ -101,15 +103,17 @@ async function submitCorrection(payload) {
 // 절대 원점(x, y)을 반드시 더해줘야 함.
 async function buildMaskedPdfBlob(file, maskRegionsByPage) {
     const bytes = await file.arrayBuffer();
-    const pdfDoc = await PDFLib.PDFDocument.load(bytes);
-    const pdfPages = pdfDoc.getPages();
+    const srcDoc = await PDFLib.PDFDocument.load(bytes);
+    const outDoc = await PDFLib.PDFDocument.create();
+    const pageCount = srcDoc.getPageCount();
 
-    for (const [pageNum, boxes] of maskRegionsByPage.entries()) {
-        const pdfPage = pdfPages[pageNum];
-        if (!pdfPage) continue;
-        const cropBox = pdfPage.getCropBox();
+    for (let pageNum = 0; pageNum < pageCount; pageNum++) {
+        // 1. 마스킹본 페이지
+        const [maskedPage] = await outDoc.copyPages(srcDoc, [pageNum]);
+        const boxes = maskRegionsByPage.get(pageNum) || [];
+        const cropBox = maskedPage.getCropBox();
         for (const [x1, y1, x2, y2] of boxes) {
-            pdfPage.drawRectangle({
+            maskedPage.drawRectangle({
                 x: cropBox.x + x1,
                 y: cropBox.y + (cropBox.height - y2),
                 width: Math.max(0, x2 - x1),
@@ -117,9 +121,14 @@ async function buildMaskedPdfBlob(file, maskRegionsByPage) {
                 color: PDFLib.rgb(0.1, 0.1, 0.1),
             });
         }
+        outDoc.addPage(maskedPage);
+
+        // 2. 정답 확인용 원본 페이지 (마스킹 없이 그대로)
+        const [origPage] = await outDoc.copyPages(srcDoc, [pageNum]);
+        outDoc.addPage(origPage);
     }
 
-    const outBytes = await pdfDoc.save();
+    const outBytes = await outDoc.save();
     return new Blob([outBytes], { type: "application/pdf" });
 }
 
@@ -131,7 +140,10 @@ function downloadBlob(blob, filename) {
     document.body.appendChild(a);
     a.click();
     a.remove();
-    URL.revokeObjectURL(url);
+    // click() 직후 바로 revoke하면 브라우저가 blob을 다 읽기 전에 URL이 무효화돼
+    // 다운로드가 중간에 끊기는 경우가 있음(미완성 .crdownload 파일로 남음) — 다운로드
+    // 매니저가 읽을 시간을 준 뒤에 정리함.
+    setTimeout(() => URL.revokeObjectURL(url), 3000);
 }
 
 document.addEventListener("DOMContentLoaded", () => {
@@ -596,6 +608,10 @@ function initReviewDemo() {
 
             const blob = await buildMaskedPdfBlob(originalFile, maskRegionsByPage);
             downloadBlob(blob, `masked_${originalFile.name}`);
+            // 같은 분석 세션으로 확정을 여러 번 누르면 analyze 시점 이미지 폴더가
+            // 첫 번째 확정에서 이미 옮겨져 없어져서 두 번째부터는 학습 데이터가
+            // 비게 됨 — 다시 못 누르도록 확정 후 업로드 화면으로 돌아가게 함.
+            closeReview();
         } catch (err) {
             console.error("[청킹 확정] 마스킹 PDF 생성 실패:", err);
             alert(`마스킹 PDF를 만들지 못했어요: ${err.message}`);

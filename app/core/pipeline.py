@@ -279,46 +279,6 @@ class PDFMaskingPipeline:
             return self.keyword_extractor.infer_pdf([regions_words_data])[0]
         return self.keyword_extractor.infer(regions_words_data)
 
-    def process(self, input_pdf_path: str, output_pdf_path: str, mask_ratio: float = 0.3):
-        random.seed(51)
-        doc = fitz.open(input_pdf_path)
-        orig_doc = fitz.open(input_pdf_path)
-        output_doc = fitz.open()
-        total_pages = len(doc)
-
-        # 페이지 단위 순회
-        for page_num in range(total_pages):
-            page = doc[page_num]
-            regions_words_data, scale_x, scale_y, _, _, _ = self._extract_page_words(doc, input_pdf_path, page_num)
-            keyword_results = self._chunk_words(regions_words_data)
-
-            # 5. 마스킹 드로잉 (원본 PDF 위에 직접 그리기)
-            for region_keywords in (keyword_results.values() if isinstance(keyword_results, dict) else keyword_results):
-                if region_keywords:
-                    num_to_mask = max(1, int(len(region_keywords) * mask_ratio))
-                    masked_kws = random.sample(region_keywords, num_to_mask)
-                else:
-                    masked_kws = []
-
-                for kw in masked_kws:
-                    words_to_draw = kw.get("words", [kw])
-                    for w_dict in words_to_draw:
-                        px1, py1, px2, py2 = w_dict["bbox"]
-                        rect = fitz.Rect(px1 * scale_x, py1 * scale_y, px2 * scale_x, py2 * scale_y)
-                        # 까만색으로 채워서 마스킹 (텍스트 유출 방지용)
-                        page.draw_rect(rect, color=(0.1, 0.1, 0.1), fill=(0.1, 0.1, 0.1))
-
-            # 6. 마스킹 완료된 페이지 즉시 삽입 (별도 루프 불필요)
-            output_doc.insert_pdf(doc, from_page=page_num, to_page=page_num)
-            output_doc.insert_pdf(orig_doc, from_page=page_num, to_page=page_num)
-
-        output_doc.save(output_pdf_path, garbage=3, deflate=True)
-        output_doc.close()
-        orig_doc.close()
-        doc.close()
-
-        return {"status": "success", "output": output_pdf_path}
-
     def analyze(self, input_pdf_path: str, file_id: str | None = None) -> list[dict]:
         """
         마스킹을 확정하지 않고, 페이지별 원본 어절 위치(bbox, PDF pt 단위)+점수를 반환.
